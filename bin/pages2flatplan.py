@@ -11,6 +11,15 @@ import StringIO
 from PIL import Image
 from git import Repo
 
+def compile_latex(working_dir, tex_filename):
+
+    cmd = ['/usr/texbin/pdflatex', tex_filename]
+    output = subprocess.check_output(cmd, cwd=working_dir,
+                                     stderr=subprocess.STDOUT)
+
+    print re.sub(r'\.tex$', '.pdf', tex_filename)
+
+
 def commits(repo_path):
     repo = Repo(repo_path)
     origin = repo.remotes.origin
@@ -19,9 +28,24 @@ def commits(repo_path):
     commits = reversed([ c for c in repo.iter_commits('master') ])
 
     for commit in commits:
-        commit.checkout()
+        print commit
+        repo.git.checkout(commit)
+        #commit.checkout()
         print commit, time.asctime(time.gmtime(commit.committed_date))
-        print os.listdir(os.path.join(repo_path, 'latex'))
+        latex_dir = os.path.abspath(os.path.join(repo_path, 'latex'))
+        if os.path.exists(latex_dir):
+            tex_fn = None
+            for fn in os.listdir(latex_dir):
+                if fn.endswith('.tex'):
+                    tex_fn = fn
+                    break
+            if tex_fn is None:
+                print "No .tex file found in 'latex' directory."
+                break
+            compile_latex(latex_dir, tex_fn)
+            break
+        else:
+            print "There's no 'latex' directory"
 
 def pdf2pngpages(pdf_fn, output_fn='page-%03d.png', output_dir='.'):
 
