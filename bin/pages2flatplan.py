@@ -90,13 +90,16 @@ def create_pages(repo_path, commit):
 
     return pages
 
-def commits(repo_path):
+def commits(repo_path, page_format=None):
     repo = Repo(repo_path)
     origin = repo.remotes.origin
     repo.git.checkout('master')
     repo.git.clean('-f', '-d')
     origin.fetch()
     origin.pull()
+
+    if page_format is None:
+        page_format = 'flatplan-%03d.png'
 
     commits = reversed([ c for c in repo.iter_commits('master') ])
     commit_pages = [ ]
@@ -126,7 +129,7 @@ def commits(repo_path):
 
         if flatplan is not None:
             shutil.copyfile(flatplan,
-                            os.path.join('out', 'flatplan-%03d.png' % count))
+                            os.path.join('out', page_format % count))
         count += 1
 
 
@@ -252,18 +255,11 @@ def create_flatplan(pages, page_positions, page_size, output_size, output_file):
 
 def main(argv):
     repo_path = argv[1]
-    commits(repo_path)
-    return
+    page_format = None
+    if len(argv) >= 2:
+        page_format = argv[2]
 
-    page_dir = 'output'
-
-    pages = pdf2pngpages(argv[1], output_dir=page_dir)
-#    pages = get_pages(page_dir)
-
-    output_size = (1920, 1080)
-    page_positions, page_size = page_grid(pages, output_size)
-
-    create_flatplan(pages, page_positions, page_size, output_size)
+    commits(repo_path, page_format)
 
 
 if __name__ == '__main__':
