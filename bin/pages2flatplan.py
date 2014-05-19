@@ -63,29 +63,72 @@ def process_commit(repo_path, commit):
 
     return flatplan
 
+def create_pages(repo_path, commit):
+    latex_dir = os.path.abspath(os.path.join(repo_path, 'latex'))
+    cache = cache_dir(commit)
+    png_dir = os.path.join(cache, 'png')
+    pages = [ os.path.join(png_dir, f) for f in os.listdir(png_dir) ]
+    if len(pages) > 0:
+        print '+' * len(pages)
+    elif os.path.exists(latex_dir):
+        tex_fn = None
+        for fn in os.listdir(latex_dir):
+            if fn.endswith('.tex'):
+                tex_fn = fn
+                break
+        if tex_fn is None:
+            print "No .tex file found in 'latex' directory."
+            return
+        pdf_file = compile_latex(latex_dir, tex_fn)
+        pdf_cache = os.path.join(cache, 'pdf', pdf_file)
+        shutil.copyfile(os.path.join(latex_dir, pdf_file), pdf_cache)
+
+        png_dir = os.path.join(cache, 'png')
+        pages = pdf2pngpages(pdf_cache, output_dir=png_dir)
+    else:
+        print "There's no 'latex' directory"
+
+    return pages
+
 def commits(repo_path):
     repo = Repo(repo_path)
     origin = repo.remotes.origin
+    repo.git.checkout('master')
+    repo.git.clean('-f', '-d')
     origin.fetch()
+    origin.pull()
 
     commits = reversed([ c for c in repo.iter_commits('master') ])
+    commit_pages = [ ]
 
-    count = 0
     for commit in commits:
         repo.git.checkout(commit)
         repo.git.clean('-f', '-d')
 
         print commit, time.asctime(time.gmtime(commit.committed_date))
 
-        flatplan = process_commit(repo_path, commit)
+        pages = create_pages(repo_path, commit)
+        if len(pages) > 0:
+            commit_pages.append({'pages': pages, 'commit': commit})
+
+    output_size = (1920, 1080)
+    page_counts = [ len(cp['pages']) for cp in commit_pages ]
+    ind = page_counts.index(max(page_counts))
+    max_pages = commit_pages[ind]['pages']
+    page_positions, page_size, output_size = page_grid(max_pages, output_size)
+    count = 0
+    for cp in commit_pages:
+
+        cache = cache_dir(cp['commit'])
+        flatplan = os.path.join(cache, 'flatplan', 'flatplan.png')
+        create_flatplan(cp['pages'], page_positions, page_size,
+                        output_size, flatplan)
 
         if flatplan is not None:
             shutil.copyfile(flatplan,
                             os.path.join('out', 'flatplan-%03d.png' % count))
-
         count += 1
-        if count > 4:
-            break
+
 
 def pdf2pngpages(pdf_fn, output_fn='page-%03d.png', output_dir='.'):
 
@@ -143,13 +186,13 @@ def page_grid(pages, output_size):
     down = ceil(page_count / across)
     grid = (int(across), int(down))
 
-    print output_size, page_size
-    print o_ratio, p_ratio, g_ratio
-    print page_count, sqrt(page_count * g_ratio)
+#    print output_size, page_size
+#    print o_ratio, p_ratio, g_ratio
+#    print page_count, sqrt(page_count * g_ratio)
 
     h_gutter = [20, 20]
     v_gutter = [20, 20]
-    min_margin = 4
+    min_margin = 10
 
     usable_width = output_size[0] - (grid[0]-1)*min_margin \
                     - sum(h_gutter)
@@ -164,16 +207,24 @@ def page_grid(pages, output_size):
         
     new_page_size = (page_width, page_height)
     
-    h_margins = min_margin + (usable_width - (new_page_size[0]*grid[0])) / (grid[0]-1)
-    h_gutter[1] = (output_size[0] - (new_page_size[0]*grid[0]) - (h_margins*(grid[0]-1))) / 2
-    h_gutter[0] = output_size[0] - (new_page_size[0]*grid[0]) - (h_margins*(grid[0]-1)) - h_gutter[1]
+    h_margins = min_margin
+    v_margins = min_margin
 
-    if grid[1] > 1:
-        v_margins = (output_size[1] - sum(v_gutter) - new_page_size[1]*grid[1]) / (grid[1]-1)
-    else:
-        v_margins = 0
-    v_gutter[1] = (output_size[1] - (new_page_size[1]*grid[1]) - (v_margins*(grid[1]-1))) / 2
-    v_gutter[0] = output_size[1] - (new_page_size[1]*grid[1]) - (v_margins*(grid[1]-1)) - v_gutter[1]
+    output_size = (sum(h_gutter) - min_margin +
+                    grid[0]*(new_page_size[0] + min_margin),
+                   sum(v_gutter) - min_margin +
+                    grid[1]*(new_page_size[1] + min_margin))
+
+#    h_margins = min_margin + (usable_width - (new_page_size[0]*grid[0])) / (grid[0]-1)
+#    h_gutter[1] = (output_size[0] - (new_page_size[0]*grid[0]) - (h_margins*(grid[0]-1))) / 2
+#    h_gutter[0] = output_size[0] - (new_page_size[0]*grid[0]) - (h_margins*(grid[0]-1)) - h_gutter[1]
+#
+#    if grid[1] > 1:
+#        v_margins = (output_size[1] - sum(v_gutter) - new_page_size[1]*grid[1]) / (grid[1]-1)
+#    else:
+#        v_margins = 0
+#    v_gutter[1] = (output_size[1] - (new_page_size[1]*grid[1]) - (v_margins*(grid[1]-1))) / 2
+#    v_gutter[0] = output_size[1] - (new_page_size[1]*grid[1]) - (v_margins*(grid[1]-1)) - v_gutter[1]
 
     # Create a list of positions (top-right corner) for each page in pages.
     page_pos = [ ]
@@ -181,17 +232,16 @@ def page_grid(pages, output_size):
         x = i % grid[0]
         y = i / grid[0]
 
-        print v_gutter[0], y, new_page_size[1], v_margins
         pos = [ h_gutter[0] + x * (new_page_size[0] + h_margins),
                 v_gutter[0] + y * (new_page_size[1] + v_margins) ]
         page_pos.append(pos)
 
-    print new_page_size
-    print page_pos
-    return page_pos, new_page_size
+#    print new_page_size
+#    print page_pos
+    return page_pos, new_page_size, output_size
 
 def create_flatplan(pages, page_positions, page_size, output_size, output_file):
-    fp = Image.new('RGBA', output_size, (0, 0, 0, 255))
+    fp = Image.new('RGBA', output_size, (0, 0, 0, 0))
 
     for i in range(len(pages)):
         page = Image.open(pages[i])
