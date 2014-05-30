@@ -8,17 +8,27 @@ import subprocess
 from math import sqrt, ceil
 import StringIO
 import shutil
+import json
 
 from PIL import Image
 from git import Repo
 
 def compile_latex(working_dir, tex_filename):
 
-    cmd = ['/usr/texbin/pdflatex', tex_filename]
-    output = subprocess.check_output(cmd, cwd=working_dir,
-                                     stderr=subprocess.STDOUT)
+    error = False
+    for util in ['pdflatex', 'pdflatex']:
+        cmd = ['/usr/texbin/'+util, '-interaction=nonstopmode', tex_filename]
+        try:
+            output = subprocess.check_output(cmd, cwd=working_dir,
+                                             stderr=subprocess.STDOUT)
+        except subprocess.CalledProcessError:
+            error = True
 
     pdf_filename = re.sub(r'\.tex$', '.pdf', tex_filename)
+    if error is True:
+        if os.path.exists(os.path.join(working_dir, pdf_filename)) is False:
+            print "No output generated!"
+            pdf_filename = None
     return pdf_filename
 
 def cache_dir(commit):
@@ -36,7 +46,7 @@ def cache_dir(commit):
 def process_commit(repo_path, commit):
     latex_dir = os.path.abspath(os.path.join(repo_path, 'latex'))
     cache = cache_dir(commit)
-    output_size = (1920, 1080)
+    output_size = (800, 600) #(1920, 1080)
     flatplan = None
     if os.path.exists(latex_dir):
         tex_fn = None
@@ -71,11 +81,13 @@ def create_pages(repo_path, commit):
     if len(pages) > 0:
         print '+' * len(pages)
     elif os.path.exists(latex_dir):
-        tex_fn = None
-        for fn in os.listdir(latex_dir):
-            if fn.endswith('.tex'):
-                tex_fn = fn
-                break
+        tex_fn = 'amt-Thesis-dynamic_tuning.tex'
+        if os.path.exists(os.path.join(latex_dir, tex_fn)) is False:
+            tex_fn = None
+            for fn in os.listdir(latex_dir):
+                if fn.endswith('.tex'):
+                    tex_fn = fn
+                    break
         if tex_fn is None:
             print "No .tex file found in 'latex' directory."
             return
@@ -99,7 +111,7 @@ def commits(repo_path, page_format=None):
     origin.pull()
 
     if page_format is None:
-        page_format = 'flatplan-%03d.png'
+        page_format = 'flatplan-%(page)03d.png'
 
     commits = reversed([ c for c in repo.iter_commits('master') ])
     commit_pages = [ ]
@@ -110,37 +122,48 @@ def commits(repo_path, page_format=None):
 
         print commit, time.asctime(time.gmtime(commit.committed_date))
 
+        commit_date = time.asctime(time.gmtime(commit.committed_date))
         pages = create_pages(repo_path, commit)
         if len(pages) > 0:
-            commit_pages.append({'pages': pages, 'commit': commit})
+            commit_pages.append({'pages': pages, 'commit': str(commit),
+                                 'date': commit_date })
 
-    output_size = (1920, 1080)
+    output_size = (800, 600) #(1920, 1080)
     page_counts = [ len(cp['pages']) for cp in commit_pages ]
     ind = page_counts.index(max(page_counts))
     max_pages = commit_pages[ind]['pages']
     page_positions, page_size, output_size = page_grid(max_pages, output_size)
     count = 0
+    data = [ ]
+    print "Creating {0} flatplan files at size {1}"\
+            .format(len(commit_pages), output_size)
     for cp in commit_pages:
 
         cache = cache_dir(cp['commit'])
         flatplan = os.path.join(cache, 'flatplan', 'flatplan.png')
         create_flatplan(cp['pages'], page_positions, page_size,
                         output_size, flatplan)
+        cp['page'] = count
+        filename = page_format % cp
 
         if flatplan is not None:
-            shutil.copyfile(flatplan,
-                            os.path.join('out', page_format % count))
+            shutil.copyfile(flatplan, os.path.join('out', filename))
+        sys.stderr.write('o')
         count += 1
+        data.append({'commit': cp['commit'], 'filename': filename,
+                     'date': cp['date']})
+    print ''
 
+    return data 
 
-def pdf2pngpages(pdf_fn, output_fn='page-%03d.png', output_dir='.'):
+def pdf2pngpages(pdf_fn, output_fn='page-%(page)03d.png', output_dir='.'):
 
     output_png = os.path.join(output_dir, output_fn)
     i = 0
     result = 0
     pages = [ ]
     while result == 0:
-        output_file = output_png % (i,)
+        output_file = output_png % {'page':i}
         cmd = ['convert',
                '-density', '150',
                '{0}[{1}]'.format(pdf_fn, i),
@@ -259,7 +282,11 @@ def main(argv):
     if len(argv) >= 2:
         page_format = argv[2]
 
-    commits(repo_path, page_format)
+    out_data = commits(repo_path, page_format)
+
+    fh = open('tesi-tn.json', 'w')
+    json.dump(out_data, fh)
+    fh.close()
 
 
 if __name__ == '__main__':
